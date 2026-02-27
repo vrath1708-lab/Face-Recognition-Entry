@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>User Registration - VIP Lounge Access</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", Arial, sans-serif;
+        background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 35%, #312e81 70%, #0f766e 100%);
+        background-size: 200% 200%;
+        animation: bgShift 10s ease infinite;
+        color: #111827;
+      }
+      @keyframes bgShift {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+      }
+      .container { max-width: 820px; margin: 0 auto; padding: 18px; }
+      .hero { background: linear-gradient(135deg, #4f46e5 0%, #2563eb 100%); color: #fff; border-radius: 14px; padding: 18px; margin-bottom: 14px; box-shadow: 0 14px 28px rgba(37,99,235,.3); }
+      .card {
+        background: rgba(255,255,255,.93);
+        border: 1px solid rgba(255,255,255,.45);
+        border-radius: 14px;
+        padding: 16px;
+        margin-bottom: 14px;
+        box-shadow: 0 10px 22px rgba(15,23,42,.18);
+        backdrop-filter: blur(6px);
+      }
+      h1, h2 { margin-top: 0; }
+      input, button { width: 100%; box-sizing: border-box; padding: 11px; border-radius: 10px; border: 1px solid #cbd5e1; margin-top: 8px; }
+      input:focus { outline: none; border-color: #0284c7; box-shadow: 0 0 0 3px rgba(2,132,199,.15); }
+      button { background: linear-gradient(135deg, #4f46e5, #2563eb); color: #fff; border: 0; font-weight: 700; cursor: pointer; }
+      button.secondary { background: #475569; }
+      button:disabled { opacity: 0.7; cursor: not-allowed; }
+      video, canvas { width: 100%; border-radius: 10px; background: #111827; margin-top: 10px; }
+      .hidden { display: none; }
+      .muted { color: #64748b; }
+      .good { color: #15803d; font-weight: 700; }
+      .bad { color: #b91c1c; font-weight: 700; }
+      .top-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+      .top-actions a, .top-actions button { flex: 1 1 220px; text-decoration: none; text-align: center; }
+      a { color: #1d4ed8; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="hero">
+        <h1>User Portal</h1>
+        <p style="margin:0;opacity:.95">Capture your face and submit VIP application for admin review.</p>
+      </div>
+
+      <div id="sessionCard" class="card">
+        <h2>Session</h2>
+        <div class="top-actions">
+          <button id="logoutBtn" class="secondary">Logout</button>
+        </div>
+        <div id="sessionStatus" class="muted" style="margin-top:10px;">No credential login needed. Fill details and submit application.</div>
+      </div>
+
+      <div id="registerCard" class="card">
+        <h2>VIP Application Registration</h2>
+        <input id="name" placeholder="Full Name" />
+        <input id="email" type="email" placeholder="Email Address" />
+        <button id="startCamBtn">Start Camera</button>
+        <button id="captureBtn" class="secondary">Capture Face</button>
+        <video id="video" autoplay playsinline class="hidden"></video>
+        <canvas id="canvas" class="hidden"></canvas>
+        <button id="registerBtn">Submit Application</button>
+        <div id="result" class="muted">No action yet.</div>
+      </div>
+
+      <div id="afterCard" class="card">
+        <h2>After Registration</h2>
+        <p class="muted">Admin will review your application and mark it as Approved VIP or Rejected. Gate live verification is handled by airport employees at the lounge gate.</p>
+      </div>
+
+      <p><a href="/">Back to portal</a></p>
+    </div>
+
+    <script>
+      let token = null;
+      let stream = null;
+      let capturedBlob = null;
+      const sessionStatus = document.getElementById('sessionStatus');
+      const registerBtn = document.getElementById('registerBtn');
+
+      function updateRegisterButtonState() {
+        const name = document.getElementById('name').value.trim();
+        const email = document.getElementById('email').value.trim();
+        registerBtn.disabled = !(name && email && capturedBlob);
+      }
+
+
+      const video = document.getElementById('video');
+      const canvas = document.getElementById('canvas');
+      const resultEl = document.getElementById('result');
+
+      async function startCamera() {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+          video.srcObject = stream;
+          video.classList.remove('hidden');
+          resultEl.textContent = 'Camera active. Capture your face.';
+          resultEl.className = 'muted';
+        } catch {
+          resultEl.textContent = 'Unable to access camera.';
+          resultEl.className = 'bad';
+        }
+      }
+
+      async function captureLiveImage() {
+        if (!stream) {
+          resultEl.textContent = 'Start camera first.';
+          resultEl.className = 'bad';
+          return;
+        }
+
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const context = canvas.getContext('2d');
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.classList.remove('hidden');
+
+        capturedBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.95));
+        if (!capturedBlob) {
+          resultEl.textContent = 'Capture failed.';
+          resultEl.className = 'bad';
+          updateRegisterButtonState();
+          return;
+        }
+
+        resultEl.textContent = 'Face captured successfully.';
+        resultEl.className = 'good';
+        updateRegisterButtonState();
+      }
+
+      async function submitApplication() {
+        const registerBtn = document.getElementById('registerBtn');
+        const name = document.getElementById('name').value.trim();
+        const email = document.getElementById('email').value.trim().toLowerCase();
+
+        if (!name) {
+          resultEl.textContent = 'Full name is required.';
+          resultEl.className = 'bad';
+          return;
+        }
+
+        if (!email || !email.includes('@')) {
+          resultEl.textContent = 'Valid email is required.';
+          resultEl.className = 'bad';
+          return;
+        }
+
+        if (!capturedBlob) {
+          resultEl.textContent = 'Capture face first.';
+          resultEl.className = 'bad';
+          return;
+        }
+
+        try {
+          const form = new FormData();
+          form.append('name', name);
+          form.append('email', email);
+          form.append('image', capturedBlob, 'registration-face.jpg');
+
+          registerBtn.disabled = true;
+          registerBtn.textContent = 'Submitting...';
+
+          const res = await fetch('/api/register', {
+            method: 'POST',
+            body: form,
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || 'Registration failed');
+
+          resultEl.textContent = `Application saved for admin review. Your ID: ${data.application.member_id}. Re-submitting updates the same application.`;
+          resultEl.className = 'good';
+          capturedBlob = null;
+          updateRegisterButtonState();
+        } catch (error) {
+          resultEl.textContent = error.message;
+          resultEl.className = 'bad';
+        } finally {
+          registerBtn.disabled = false;
+          registerBtn.textContent = 'Submit Application';
+          updateRegisterButtonState();
+        }
+      }
+
+      async function logout() {
+        token = null;
+        window.location.href = '/';
+      }
+
+      document.getElementById('startCamBtn').addEventListener('click', startCamera);
+      document.getElementById('captureBtn').addEventListener('click', captureLiveImage);
+      document.getElementById('registerBtn').addEventListener('click', submitApplication);
+      document.getElementById('logoutBtn').addEventListener('click', logout);
+      document.getElementById('name').addEventListener('input', updateRegisterButtonState);
+      document.getElementById('name').addEventListener('change', updateRegisterButtonState);
+      document.getElementById('name').addEventListener('blur', updateRegisterButtonState);
+      document.getElementById('email').addEventListener('input', updateRegisterButtonState);
+      document.getElementById('email').addEventListener('change', updateRegisterButtonState);
+      document.getElementById('email').addEventListener('blur', updateRegisterButtonState);
+
+      sessionStatus.className = 'good';
+      registerBtn.disabled = true;
+      updateRegisterButtonState();
+      setTimeout(updateRegisterButtonState, 300);
+    </script>
+  </body>
+</html>

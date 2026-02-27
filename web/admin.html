@@ -1,0 +1,806 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin Portal - User Database Management</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", Arial, sans-serif;
+        color: #0f172a;
+        background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 35%, #312e81 70%, #0f766e 100%);
+        background-size: 200% 200%;
+        animation: bgShift 10s ease infinite;
+      }
+      @keyframes bgShift {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+      }
+      .container { max-width: 1200px; margin: 0 auto; padding: 16px; }
+      body.auth-mode .container {
+        max-width: 920px;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+      }
+      body.auth-mode .hero,
+      body.auth-mode #adminDashboard {
+        display: none;
+      }
+      body.auth-mode #adminLoginCard {
+        width: 100%;
+      }
+      .login-shell {
+        display: none;
+      }
+      body.auth-mode .login-shell {
+        display: grid;
+        width: 100%;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+      .login-info {
+        background: linear-gradient(145deg, rgba(79, 70, 229, 0.92), rgba(37, 99, 235, 0.9));
+        color: #fff;
+        border-radius: 14px;
+        padding: 20px;
+        box-shadow: 0 14px 30px rgba(37, 99, 235, 0.32);
+      }
+      .login-info h2 {
+        margin: 0 0 8px;
+        font-size: 26px;
+      }
+      .login-info p {
+        margin: 0 0 12px;
+        opacity: 0.95;
+      }
+      .login-bullets {
+        margin: 0;
+        padding-left: 18px;
+        display: grid;
+        gap: 6px;
+        font-size: 14px;
+      }
+      .login-back {
+        margin-top: 14px;
+        display: inline-block;
+        color: #dbeafe;
+        font-weight: 600;
+      }
+      .hero {
+        background: linear-gradient(135deg, #4f46e5, #2563eb);
+        color: #fff;
+        border-radius: 16px;
+        padding: 18px;
+        box-shadow: 0 14px 30px rgba(37, 99, 235, 0.3);
+        margin-bottom: 14px;
+      }
+      .hero h1 { margin: 0 0 6px; }
+      .hero p { margin: 0; opacity: 0.95; }
+      .card {
+        background: rgba(255, 255, 255, 0.93);
+        border: 1px solid rgba(255, 255, 255, 0.45);
+        border-radius: 14px;
+        padding: 14px;
+        box-shadow: 0 10px 22px rgba(15, 23, 42, 0.22);
+        backdrop-filter: blur(6px);
+      }
+      #adminLoginCard {
+        padding: 20px;
+      }
+      .field {
+        margin-bottom: 10px;
+      }
+      .field label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+        color: #334155;
+        font-weight: 700;
+      }
+      .password-wrap {
+        position: relative;
+      }
+      .password-wrap input {
+        padding-right: 88px;
+      }
+      .password-toggle {
+        position: absolute;
+        right: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: auto;
+        padding: 6px 10px;
+        border-radius: 8px;
+        background: #e2e8f0;
+        color: #0f172a;
+        border: 1px solid #cbd5e1;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .login-btn {
+        margin-top: 2px;
+        padding: 11px;
+      }
+      .login-status {
+        margin-top: 10px;
+        min-height: 20px;
+        font-size: 14px;
+      }
+      .toolbar {
+        display: grid;
+        grid-template-columns: 1.2fr 1fr 1fr auto;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 1.2fr 1fr;
+        gap: 14px;
+      }
+      .stack { display: grid; gap: 14px; }
+      @media (max-width: 980px) {
+        .layout { grid-template-columns: 1fr; }
+        .toolbar { grid-template-columns: 1fr; }
+      }
+      input, select, textarea, button {
+        width: 100%;
+        padding: 10px 11px;
+        border-radius: 10px;
+        border: 1px solid #cbd5e1;
+        font-family: inherit;
+      }
+      textarea { min-height: 88px; resize: vertical; }
+      input:focus, select:focus, textarea:focus {
+        outline: none;
+        border-color: #1d4ed8;
+        box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.14);
+      }
+      button {
+        border: none;
+        background: linear-gradient(135deg, #4f46e5, #2563eb);
+        color: #fff;
+        cursor: pointer;
+        font-weight: 700;
+      }
+      button.secondary { background: #334155; }
+      button.success { background: #15803d; }
+      button.warn { background: #b45309; }
+      button.danger { background: #b91c1c; }
+      button:disabled { opacity: 0.6; cursor: not-allowed; }
+      .muted { color: #64748b; }
+      .good { color: #166534; font-weight: 700; }
+      .bad { color: #b91c1c; font-weight: 700; }
+      .row {
+        display: grid;
+        grid-template-columns: 1.6fr 1fr 1fr auto;
+        gap: 8px;
+        padding: 10px 0;
+        border-bottom: 1px solid #eef2f7;
+        align-items: center;
+      }
+      .row:last-child { border-bottom: none; }
+      .list { max-height: 430px; overflow: auto; }
+      .actions { display: flex; gap: 6px; }
+      .actions button { width: auto; padding: 7px 9px; font-size: 12px; }
+      .chip {
+        font-size: 12px;
+        border-radius: 999px;
+        padding: 3px 8px;
+        display: inline-block;
+        font-weight: 700;
+      }
+      .pending { background: #fef3c7; color: #92400e; }
+      .approved { background: #dcfce7; color: #166534; }
+      .rejected { background: #fee2e2; color: #991b1b; }
+      .detail-grid { display: grid; grid-template-columns: 1fr; gap: 8px; }
+      .face-preview {
+        width: 180px;
+        height: 180px;
+        object-fit: cover;
+        border-radius: 12px;
+        border: 1px solid #dbe3f0;
+        background: #f8fafc;
+      }
+      .footer-links { margin-top: 12px; }
+      .footer-links a { color: #1d4ed8; }
+      .stats { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+      .stat {
+        background: #eef2ff;
+        color: #1e3a8a;
+        border-radius: 10px;
+        padding: 6px 10px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .hidden { display: none; }
+      .login-title {
+        margin-top: 0;
+        text-align: center;
+      }
+      .login-subtitle {
+        margin: 0 0 14px;
+        text-align: center;
+        color: #64748b;
+      }
+      @media (max-width: 900px) {
+        body.auth-mode .login-shell {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body class="auth-mode">
+    <div class="container">
+      <div class="login-shell">
+        <div class="login-info">
+          <h2>Admin Control Center</h2>
+          <p>Secure login for VIP lounge member management and approval workflow.</p>
+          <ul class="login-bullets">
+            <li>Review and approve pending VIP applications</li>
+            <li>Update user details and status in one place</li>
+            <li>Track latest audit events from admin actions</li>
+          </ul>
+          <a class="login-back" href="/">← Back to Home</a>
+        </div>
+
+        <div id="adminLoginCard" class="card">
+          <h2 class="login-title">Admin Login</h2>
+          <p class="login-subtitle">Enter your credentials to continue.</p>
+          <div class="field">
+            <label for="adminUsername">Username</label>
+            <input id="adminUsername" placeholder="Enter admin username" autocomplete="username" />
+          </div>
+          <div class="field">
+            <label for="adminPassword">Password</label>
+            <div class="password-wrap">
+              <input id="adminPassword" type="password" placeholder="Enter password" autocomplete="current-password" />
+              <button id="togglePasswordBtn" type="button" class="password-toggle">Show</button>
+            </div>
+          </div>
+          <button id="adminLoginBtn" class="login-btn">Login</button>
+          <div id="adminLoginStatus" class="muted login-status">Enter admin credentials to open database management.</div>
+        </div>
+      </div>
+
+      <div class="hero">
+        <h1>Admin Database Management</h1>
+        <p>Manage user records, review statuses, edit details, delete users, and monitor audit events.</p>
+        <div id="sessionInfo" class="stats"></div>
+      </div>
+
+      <div id="adminDashboard" class="layout hidden">
+        <div class="card">
+          <h2 style="margin-top:0">Users</h2>
+          <div class="toolbar">
+            <input id="searchInput" placeholder="Search by member ID, name, or email" />
+            <select id="statusFilter">
+              <option value="all">All Statuses</option>
+              <option value="pending">Pending</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
+            </select>
+            <select id="limitFilter">
+              <option value="50">50 rows</option>
+              <option value="100" selected>100 rows</option>
+              <option value="200">200 rows</option>
+              <option value="500">500 rows</option>
+            </select>
+            <button id="refreshBtn">Refresh</button>
+          </div>
+          <div id="usersMeta" class="muted">No data loaded.</div>
+          <div id="usersList" class="list muted" style="margin-top:8px;">No users yet.</div>
+        </div>
+
+        <div class="stack">
+          <div class="card">
+            <h2 style="margin-top:0">Selected User</h2>
+            <div id="selectedHint" class="muted">Select a user from the list to view and manage details.</div>
+            <div class="detail-grid" style="margin-top:8px;">
+              <input id="memberId" placeholder="Member ID" readonly />
+              <input id="memberName" placeholder="Name" />
+              <input id="memberEmail" type="email" placeholder="Email" />
+              <select id="memberStatus">
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+              </select>
+              <textarea id="memberNote" placeholder="Review note"></textarea>
+              <div class="actions" style="flex-wrap:wrap;">
+                <button id="saveBtn" class="success">Save Update</button>
+                <button id="setPendingBtn" class="warn">Set Pending</button>
+                <button id="setApprovedBtn" class="success">Set Approved</button>
+                <button id="setRejectedBtn" class="danger">Set Rejected</button>
+                <button id="deleteBtn" class="danger">Delete User</button>
+              </div>
+              <div id="editResult" class="muted">No action yet.</div>
+              <img id="facePreview" class="face-preview" alt="Face preview" style="display:none" />
+            </div>
+          </div>
+
+          <div class="card">
+            <h2 style="margin-top:0">Audit Events</h2>
+            <button id="refreshEventsBtn">Refresh Events</button>
+            <div id="eventsList" class="list muted" style="margin-top:8px; max-height:260px;">No events loaded.</div>
+          </div>
+
+          <div class="card">
+            <button id="logoutBtn" class="secondary">Logout</button>
+            <div class="footer-links"><a href="/">Back to Home</a></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      let token = null;
+      let selectedUserId = null;
+      let usersCache = [];
+      let currentFaceImageUrl = null;
+
+      const usersListEl = document.getElementById('usersList');
+      const usersMetaEl = document.getElementById('usersMeta');
+      const eventsListEl = document.getElementById('eventsList');
+      const sessionInfoEl = document.getElementById('sessionInfo');
+      const editResultEl = document.getElementById('editResult');
+      const selectedHintEl = document.getElementById('selectedHint');
+      const adminLoginCardEl = document.getElementById('adminLoginCard');
+      const adminDashboardEl = document.getElementById('adminDashboard');
+      const adminLoginStatusEl = document.getElementById('adminLoginStatus');
+      const adminLoginBtnEl = document.getElementById('adminLoginBtn');
+      const togglePasswordBtnEl = document.getElementById('togglePasswordBtn');
+      const adminUsernameEl = document.getElementById('adminUsername');
+      const adminPasswordEl = document.getElementById('adminPassword');
+
+      function setAuthenticatedUi(isAuthenticated) {
+        if (isAuthenticated) {
+          document.body.classList.remove('auth-mode');
+          adminLoginCardEl.classList.add('hidden');
+          adminDashboardEl.classList.remove('hidden');
+        } else {
+          document.body.classList.add('auth-mode');
+          adminDashboardEl.classList.add('hidden');
+          adminLoginCardEl.classList.remove('hidden');
+          sessionInfoEl.innerHTML = '';
+        }
+      }
+
+      function statusChip(status) {
+        const cls = status === 'approved' ? 'approved' : status === 'rejected' ? 'rejected' : 'pending';
+        return `<span class="chip ${cls}">${status.toUpperCase()}</span>`;
+      }
+
+      function authHeaders() {
+        return { Authorization: `Bearer ${token}` };
+      }
+
+      function formatDate(value) {
+        if (!value) return 'N/A';
+        try { return new Date(value).toLocaleString(); } catch { return value; }
+      }
+
+      async function loadFacePreview(memberId) {
+        const imageEl = document.getElementById('facePreview');
+        if (currentFaceImageUrl) {
+          URL.revokeObjectURL(currentFaceImageUrl);
+          currentFaceImageUrl = null;
+        }
+
+        const res = await fetch(`/api/admin/users/${encodeURIComponent(memberId)}/face-image`, {
+          headers: authHeaders(),
+        });
+        if (!res.ok) {
+          throw new Error('Face image not available');
+        }
+
+        const blob = await res.blob();
+        currentFaceImageUrl = URL.createObjectURL(blob);
+        imageEl.src = currentFaceImageUrl;
+        imageEl.style.display = 'block';
+      }
+
+      async function restoreSession() {
+        token = null;
+        localStorage.removeItem('adminToken');
+        setAuthenticatedUi(false);
+      }
+
+      async function loginAdmin() {
+        const username = adminUsernameEl.value.trim();
+        const password = adminPasswordEl.value.trim();
+
+        if (!username || !password) {
+          adminLoginStatusEl.className = 'bad';
+          adminLoginStatusEl.textContent = 'Username and password are required.';
+          return;
+        }
+
+        adminLoginBtnEl.disabled = true;
+        adminLoginBtnEl.textContent = 'Signing in...';
+        adminLoginStatusEl.className = 'muted';
+        adminLoginStatusEl.textContent = 'Authenticating...';
+
+        try {
+          const form = new FormData();
+          form.append('role', 'admin');
+          form.append('username', username);
+          form.append('password', password);
+
+          const res = await fetch('/api/auth/login', { method: 'POST', body: form });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || 'Login failed');
+          if (data.role !== 'admin') throw new Error('Admin credentials required');
+
+          token = data.token;
+          localStorage.setItem('adminToken', token);
+          setAuthenticatedUi(true);
+          sessionInfoEl.innerHTML = `
+            <div class="stat">Role: admin</div>
+            <div class="stat">User: ${username}</div>
+          `;
+          adminLoginStatusEl.className = 'good';
+          adminLoginStatusEl.textContent = 'Login successful.';
+
+          await loadUsers();
+          await refreshEvents();
+        } catch (error) {
+          token = null;
+          localStorage.removeItem('adminToken');
+          setAuthenticatedUi(false);
+          adminLoginStatusEl.className = 'bad';
+          adminLoginStatusEl.textContent = error.message;
+        } finally {
+          adminLoginBtnEl.disabled = false;
+          adminLoginBtnEl.textContent = 'Login';
+        }
+      }
+
+      async function loadUsers() {
+        const status = document.getElementById('statusFilter').value;
+        const q = document.getElementById('searchInput').value.trim();
+        const limit = document.getElementById('limitFilter').value;
+
+        usersMetaEl.className = 'muted';
+        usersMetaEl.textContent = 'Loading users...';
+
+        try {
+          const url = `/api/admin/users?status=${encodeURIComponent(status)}&q=${encodeURIComponent(q)}&limit=${encodeURIComponent(limit)}`;
+          const res = await fetch(url, { headers: authHeaders() });
+          let data = null;
+
+          if (res.status === 404) {
+            const legacy = await fetch(`/api/applications?status=${encodeURIComponent(status)}`, { headers: authHeaders() });
+            const legacyData = await legacy.json();
+            if (!legacy.ok) throw new Error(legacyData.detail || 'Failed to load users');
+
+            const keyword = q.toLowerCase();
+            let legacyRows = legacyData.applications || [];
+            if (keyword) {
+              legacyRows = legacyRows.filter((item) =>
+                String(item.member_id || '').toLowerCase().includes(keyword) ||
+                String(item.name || '').toLowerCase().includes(keyword)
+              );
+            }
+            data = { count: legacyRows.length, users: legacyRows };
+          } else {
+            data = await res.json();
+          }
+
+          if (!res.ok && res.status !== 404) throw new Error(data.detail || 'Failed to load users');
+
+          usersCache = data.users || [];
+          usersMetaEl.textContent = `Loaded ${data.count} user(s)`;
+
+          if (!usersCache.length) {
+            usersListEl.className = 'list muted';
+            usersListEl.textContent = 'No matching users found.';
+            clearSelectedUser();
+            return;
+          }
+
+          usersListEl.className = 'list';
+          usersListEl.innerHTML = usersCache.map((user) => `
+            <div class="row">
+              <div>
+                <div><strong>${user.member_id}</strong> · ${user.name}</div>
+                <div class="muted">${user.email || 'No email'} · Created: ${formatDate(user.created_at)} · Reviewed: ${user.reviewed_by || 'N/A'}</div>
+              </div>
+              <div>${statusChip(user.application_status)}</div>
+              <div class="muted">${user.review_note || '-'}</div>
+              <div class="actions">
+                <button onclick="selectUser('${user.member_id}')">Manage</button>
+                <button class="success" onclick="quickStatus('${user.member_id}','approved')">Approve</button>
+                <button class="danger" onclick="quickStatus('${user.member_id}','rejected')">Reject</button>
+              </div>
+            </div>
+          `).join('');
+        } catch (error) {
+          usersListEl.className = 'list bad';
+          usersListEl.textContent = error.message;
+          usersMetaEl.className = 'bad';
+          usersMetaEl.textContent = 'Failed to load users';
+        }
+      }
+
+      async function updateStatusLegacy(memberId, status, note = '') {
+        const form = new FormData();
+        form.append('member_id', memberId);
+        form.append('decision', status);
+        form.append('note', note || '');
+
+        const res = await fetch('/api/applications/decision', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: form,
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Legacy decision failed');
+        return data;
+      }
+
+      async function selectUser(memberId) {
+        selectedUserId = memberId;
+        selectedHintEl.className = 'muted';
+        selectedHintEl.textContent = `Loading details for ${memberId}...`;
+
+        try {
+          const res = await fetch(`/api/admin/users/${encodeURIComponent(memberId)}`, { headers: authHeaders() });
+          let user = null;
+
+          if (res.status === 404) {
+            const fallback = usersCache.find((item) => String(item.member_id) === String(memberId));
+            if (!fallback) throw new Error('User not found in current list');
+            user = {
+              member_id: fallback.member_id,
+              name: fallback.name,
+              email: fallback.email || '',
+              application_status: fallback.application_status || 'pending',
+              review_note: fallback.review_note || '',
+              created_at: fallback.created_at,
+              has_face_image: false,
+            };
+          } else {
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Failed to load user details');
+            user = data.user;
+          }
+
+          document.getElementById('memberId').value = user.member_id;
+          document.getElementById('memberName').value = user.name || '';
+          document.getElementById('memberEmail').value = user.email || '';
+          document.getElementById('memberStatus').value = user.application_status || 'pending';
+          document.getElementById('memberNote').value = user.review_note || '';
+
+          selectedHintEl.className = 'good';
+          selectedHintEl.textContent = `${user.member_id} selected · Created ${formatDate(user.created_at)}`;
+
+          const imageEl = document.getElementById('facePreview');
+          try {
+            await loadFacePreview(memberId);
+          } catch {
+            imageEl.style.display = 'none';
+            imageEl.removeAttribute('src');
+          }
+
+          editResultEl.className = 'muted';
+          editResultEl.textContent = 'Selected user loaded and ready to manage.';
+        } catch (error) {
+          selectedHintEl.className = 'bad';
+          selectedHintEl.textContent = error.message;
+        }
+      }
+
+      function clearSelectedUser() {
+        selectedUserId = null;
+        document.getElementById('memberId').value = '';
+        document.getElementById('memberName').value = '';
+        document.getElementById('memberEmail').value = '';
+        document.getElementById('memberStatus').value = 'pending';
+        document.getElementById('memberNote').value = '';
+        const imageEl = document.getElementById('facePreview');
+        imageEl.style.display = 'none';
+        imageEl.removeAttribute('src');
+        if (currentFaceImageUrl) {
+          URL.revokeObjectURL(currentFaceImageUrl);
+          currentFaceImageUrl = null;
+        }
+        selectedHintEl.className = 'muted';
+        selectedHintEl.textContent = 'Select a user from the list to view and manage details.';
+      }
+
+      async function saveUserUpdate(overrideStatus = null) {
+        const memberId = document.getElementById('memberId').value.trim();
+        const name = document.getElementById('memberName').value.trim();
+        const email = document.getElementById('memberEmail').value.trim().toLowerCase();
+        const status = overrideStatus || document.getElementById('memberStatus').value;
+        const note = document.getElementById('memberNote').value;
+
+        if (!memberId) {
+          editResultEl.className = 'bad';
+          editResultEl.textContent = 'Select a user first.';
+          return;
+        }
+
+        const form = new FormData();
+        form.append('member_id', memberId);
+        if (name) form.append('name', name);
+        if (email) form.append('email', email);
+        if (status) form.append('application_status', status);
+        form.append('review_note', note);
+
+        editResultEl.className = 'muted';
+        editResultEl.textContent = 'Saving update...';
+
+        try {
+          const res = await fetch('/api/admin/users/update', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: form,
+          });
+
+          let data = null;
+          if (res.status === 404) {
+            if (status === 'approved' || status === 'rejected') {
+              data = await updateStatusLegacy(memberId, status, note);
+              editResultEl.className = 'good';
+              editResultEl.textContent = `${memberId} set to ${status.toUpperCase()} (legacy mode).`;
+            } else {
+              throw new Error('Legacy mode supports only approve/reject decisions.');
+            }
+          } else {
+            data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Update failed');
+            editResultEl.className = 'good';
+            editResultEl.textContent = `${data.member_id} updated successfully.`;
+          }
+
+          await loadUsers();
+          await selectUser(memberId);
+          await refreshEvents();
+        } catch (error) {
+          editResultEl.className = 'bad';
+          editResultEl.textContent = error.message;
+        }
+      }
+
+      async function quickStatus(memberId, status) {
+        const form = new FormData();
+        form.append('member_id', memberId);
+        form.append('application_status', status);
+
+        try {
+          const res = await fetch('/api/admin/users/update', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: form,
+          });
+
+          let data = null;
+          if (res.status === 404) {
+            data = await updateStatusLegacy(memberId, status);
+            editResultEl.className = 'good';
+            editResultEl.textContent = `${memberId} set to ${status.toUpperCase()} (legacy mode).`;
+          } else {
+            data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Status update failed');
+            editResultEl.className = 'good';
+            editResultEl.textContent = `${data.member_id} set to ${status.toUpperCase()}.`;
+          }
+
+          await loadUsers();
+          if (selectedUserId === memberId) await selectUser(memberId);
+          await refreshEvents();
+        } catch (error) {
+          editResultEl.className = 'bad';
+          editResultEl.textContent = error.message;
+        }
+      }
+
+      async function deleteSelectedUser() {
+        const memberId = document.getElementById('memberId').value.trim();
+        if (!memberId) {
+          editResultEl.className = 'bad';
+          editResultEl.textContent = 'Select a user first.';
+          return;
+        }
+
+        const ok = window.confirm(`Delete user ${memberId}? This cannot be undone.`);
+        if (!ok) return;
+
+        try {
+          const res = await fetch(`/api/admin/users/${encodeURIComponent(memberId)}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || 'Delete failed');
+
+          editResultEl.className = 'good';
+          editResultEl.textContent = `${data.member_id} deleted.`;
+          clearSelectedUser();
+          await loadUsers();
+          await refreshEvents();
+        } catch (error) {
+          editResultEl.className = 'bad';
+          editResultEl.textContent = error.message;
+        }
+      }
+
+      async function refreshEvents() {
+        eventsListEl.className = 'list muted';
+        eventsListEl.textContent = 'Loading events...';
+        try {
+          const res = await fetch('/api/events?limit=50', { headers: authHeaders() });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || 'Failed to load events');
+
+          if (!data.events || !data.events.length) {
+            eventsListEl.className = 'list muted';
+            eventsListEl.textContent = 'No events yet.';
+            return;
+          }
+
+          eventsListEl.className = 'list';
+          eventsListEl.innerHTML = data.events.slice().reverse().map((line) => `<div class="row" style="grid-template-columns:1fr">${line}</div>`).join('');
+        } catch (error) {
+          eventsListEl.className = 'list bad';
+          eventsListEl.textContent = error.message;
+        }
+      }
+
+      async function logoutAdmin() {
+        const existing = token;
+        token = null;
+        localStorage.removeItem('adminToken');
+        if (existing) {
+          try {
+            await fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${existing}` } });
+          } catch {}
+        }
+        window.location.href = '/';
+      }
+
+      document.getElementById('refreshBtn').addEventListener('click', loadUsers);
+      document.getElementById('refreshEventsBtn').addEventListener('click', refreshEvents);
+      document.getElementById('saveBtn').addEventListener('click', () => saveUserUpdate());
+      document.getElementById('setPendingBtn').addEventListener('click', () => saveUserUpdate('pending'));
+      document.getElementById('setApprovedBtn').addEventListener('click', () => saveUserUpdate('approved'));
+      document.getElementById('setRejectedBtn').addEventListener('click', () => saveUserUpdate('rejected'));
+      document.getElementById('deleteBtn').addEventListener('click', deleteSelectedUser);
+      document.getElementById('logoutBtn').addEventListener('click', logoutAdmin);
+      adminLoginBtnEl.addEventListener('click', loginAdmin);
+      adminPasswordEl.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') loginAdmin();
+      });
+      adminUsernameEl.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') loginAdmin();
+      });
+      adminUsernameEl.addEventListener('input', () => {
+        adminLoginStatusEl.className = 'muted login-status';
+        adminLoginStatusEl.textContent = 'Enter admin credentials to open database management.';
+      });
+      adminPasswordEl.addEventListener('input', () => {
+        adminLoginStatusEl.className = 'muted login-status';
+        adminLoginStatusEl.textContent = 'Enter admin credentials to open database management.';
+      });
+      togglePasswordBtnEl.addEventListener('click', () => {
+        const show = adminPasswordEl.type === 'password';
+        adminPasswordEl.type = show ? 'text' : 'password';
+        togglePasswordBtnEl.textContent = show ? 'Hide' : 'Show';
+      });
+      document.getElementById('searchInput').addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') loadUsers();
+      });
+
+      window.selectUser = selectUser;
+      window.quickStatus = quickStatus;
+
+      setAuthenticatedUi(false);
+      restoreSession();
+      setTimeout(() => adminUsernameEl.focus(), 0);
+    </script>
+  </body>
+</html>
