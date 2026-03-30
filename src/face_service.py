@@ -6,13 +6,27 @@ from typing import Dict, Optional, Tuple
 import cv2
 import numpy as np
 
-from config import EMBEDDING_BACKEND, MISMATCH_SIMILARITY_FACTOR, get_similarity_threshold
+from config import (
+    EMBEDDING_BACKEND,
+    MATCH_MARGIN_THRESHOLD,
+    MISMATCH_SIMILARITY_FACTOR,
+    ORB_EVIDENCE_RATIO_THRESHOLD,
+    ORB_GOOD_MATCH_THRESHOLD,
+    SINGLE_CANDIDATE_EXTRA_THRESHOLD,
+    get_similarity_threshold,
+)
+
+LEGACY_EMBEDDING_DIM = 64 * 64
 
 
 def _extract_primary_face(frame: np.ndarray) -> Optional[np.ndarray]:
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     detector = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
     faces = detector.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+
+    if len(faces) == 0:
+        # Fallback for mobile frames where face appears smaller or slightly angled.
+        faces = detector.detectMultiScale(gray, scaleFactor=1.08, minNeighbors=3, minSize=(40, 40))
 
     if len(faces) == 0:
         return None
@@ -26,6 +40,7 @@ def _fallback_embedding(face_region: np.ndarray) -> np.ndarray:
     resized = cv2.resize(gray, (64, 64))
     normalized = resized.astype(np.float32) / 255.0
     embedding = normalized.flatten()
+    embedding /= (np.linalg.norm(embedding) + 1e-8)
     return embedding
 
 
@@ -121,6 +136,50 @@ def build_lbph_face_from_bgr_image(image_bgr: np.ndarray) -> Optional[np.ndarray
     return _prepare_lbph_face(face_region)
 
 
+def count_orb_good_matches(probe_face: np.ndarray, reference_face: np.ndarray) -> int:
+    good_matches, _ = compute_orb_evidence(probe_face, reference_face)
+    return good_matches
+
+
+def compute_orb_evidence(probe_face: np.ndarray, reference_face: np.ndarray) -> Tuple[int, float]:
+    if probe_face is None or reference_face is None:
+        return 0, 0.0
+
+    orb = cv2.ORB_create(nfeatures=700, fastThreshold=12)
+    probe_keypoints, probe_descriptors = orb.detectAndCompute(probe_face, None)
+    reference_keypoints, reference_descriptors = orb.detectAndCompute(reference_face, None)
+
+    if not probe_keypoints or not reference_keypoints:
+        return 0, 0.0
+
+    if probe_descriptors is None or reference_descriptors is None:
+        return 0, 0.0
+
+    matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+    knn_matches = matcher.knnMatch(probe_descriptors, reference_descriptors, k=2)
+    good_matches = []
+
+    for pair in knn_matches:
+        if len(pair) < 2:
+            continue
+        first, second = pair
+        if first.distance < 0.78 * second.distance and first.distance < 64:
+            good_matches.append(first)
+
+    keypoint_floor = max(1, min(len(probe_keypoints), len(reference_keypoints)))
+    evidence_ratio = float(len(good_matches) / keypoint_floor)
+    return len(good_matches), evidence_ratio
+
+
+def passes_orb_evidence(good_matches: int, evidence_ratio: float) -> bool:
+    return good_matches >= ORB_GOOD_MATCH_THRESHOLD and evidence_ratio >= ORB_EVIDENCE_RATIO_THRESHOLD
+
+
+def passes_orb_face_validation(probe_face: np.ndarray, reference_face: np.ndarray) -> bool:
+    good_matches, evidence_ratio = compute_orb_evidence(probe_face, reference_face)
+    return passes_orb_evidence(good_matches, evidence_ratio)
+
+
 def vector_to_csv(vector: np.ndarray) -> str:
     return ",".join([str(float(x)) for x in vector.tolist()])
 
@@ -148,6 +207,13 @@ def build_embedding_from_frame(frame: np.ndarray) -> Optional[np.ndarray]:
     return _build_embedding(face_region)
 
 
+def build_embedding_from_bgr_image(image_bgr: np.ndarray) -> Optional[np.ndarray]:
+    face_region = _extract_primary_face(image_bgr)
+    if face_region is None:
+        return None
+    return _build_embedding(face_region)
+
+
 def cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
     denominator = (np.linalg.norm(vec_a) * np.linalg.norm(vec_b)) + 1e-8
     return float(np.dot(vec_a, vec_b) / denominator)
@@ -166,6 +232,18 @@ def _align_vectors(vec_a: np.ndarray, vec_b: np.ndarray) -> Tuple[np.ndarray, np
     return aligned_a, aligned_b, True
 
 
+def _is_confident_match(best_score: float, second_best_score: float, candidate_count: int) -> bool:
+    required_threshold = get_similarity_threshold()
+    if candidate_count <= 1:
+        required_threshold += SINGLE_CANDIDATE_EXTRA_THRESHOLD
+        return best_score >= required_threshold
+
+    if best_score < required_threshold:
+        return False
+
+    return (best_score - second_best_score) >= MATCH_MARGIN_THRESHOLD
+
+
 def find_best_match(
     probe_embedding: np.ndarray,
     member_embeddings: Dict[str, Tuple[str, np.ndarray]],
@@ -176,19 +254,33 @@ def find_best_match(
     best_member_id = None
     best_name = None
     best_score = -1.0
+    second_best_score = -1.0
+    comparable_candidates = 0
 
     for member_id, (name, stored_embedding) in member_embeddings.items():
+        if probe_embedding.shape[0] != stored_embedding.shape[0]:
+            continue
+
+        comparable_candidates += 1
         probe, stored, mismatched = _align_vectors(probe_embedding, stored_embedding)
         score = cosine_similarity(probe, stored)
         if mismatched:
             score *= MISMATCH_SIMILARITY_FACTOR
         if score > best_score:
+            second_best_score = best_score
             best_score = score
             best_member_id = member_id
             best_name = name
+        elif score > second_best_score:
+            second_best_score = score
 
-    threshold = get_similarity_threshold()
-    decision = "ALLOW" if best_score >= threshold else "DENY"
+    if comparable_candidates == 0:
+        return None, None, 0.0, "DENY"
+
+    decision = "ALLOW" if _is_confident_match(best_score, second_best_score, comparable_candidates) else "DENY"
+    if decision == "DENY":
+        return None, None, best_score, decision
+
     return best_member_id, best_name, best_score, decision
 
 
@@ -226,13 +318,16 @@ def find_best_match_lbph(
         member_id, name = member
         distance_value = float(max(0.0, distance))
         score = float(max(0.0, min(1.0, 1.0 - min(distance_value, 120.0) / 120.0)))
-        decision = "ALLOW" if score >= get_similarity_threshold() else "DENY"
+        decision = "ALLOW" if _is_confident_match(score, -1.0, len(train_images)) else "DENY"
+        if decision == "DENY":
+            return None, None, score, decision
         return member_id, name, score, decision
 
     probe_hist = _lbp_histogram(probe_face)
     best_member_id = None
     best_name = None
     best_score = -1.0
+    second_best_score = -1.0
 
     for member_id, (name, stored_face) in approved_faces.items():
         if stored_face is None or stored_face.size == 0:
@@ -241,15 +336,20 @@ def find_best_match_lbph(
         hist_score = float(cv2.compareHist(probe_hist.astype(np.float32), stored_hist.astype(np.float32), cv2.HISTCMP_CORREL))
         normalized_score = (hist_score + 1.0) / 2.0
         if normalized_score > best_score:
+            second_best_score = best_score
             best_score = normalized_score
             best_member_id = member_id
             best_name = name
+        elif normalized_score > second_best_score:
+            second_best_score = normalized_score
 
     if best_member_id is None:
         return None, None, 0.0, "DENY"
 
     safe_score = float(max(0.0, min(1.0, best_score)))
-    decision = "ALLOW" if safe_score >= get_similarity_threshold() else "DENY"
+    decision = "ALLOW" if _is_confident_match(safe_score, second_best_score, len(approved_faces)) else "DENY"
+    if decision == "DENY":
+        return None, None, safe_score, decision
     return best_member_id, best_name, safe_score, decision
 
 

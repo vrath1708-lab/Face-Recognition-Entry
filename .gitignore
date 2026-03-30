@@ -10,3 +10,12 @@ __pycache__/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Mobile app dependencies and build artifacts
+mobile-gate-app/node_modules/
+mobile-gate-app/.expo/
+mobile_gate_flutter/.dart_tool/
+mobile_gate_flutter/build/
+mobile_gate_flutter/android/.gradle/
+mobile_gate_flutter/.flutter-plugins
+mobile_gate_flutter/.flutter-plugins-dependencies

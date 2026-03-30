@@ -216,6 +216,7 @@
                     <div class="row">Face: <span id="faceStatus">Not detected</span></div>
                     <div class="row">Name: <span id="memberName">Waiting...</span></div>
                     <div class="row">Confidence: <span id="confidenceScore">0%</span></div>
+                    <div class="row">ORB Evidence: <span id="orbMatches">0 good matches (0%)</span></div>
                     <div class="confidence-wrap">
                         <div class="confidence-label">Match Confidence</div>
                         <div class="confidence-track">
@@ -246,9 +247,15 @@
         let stream = null;
         let ws = null;
         let isStreaming = false;
+        let awaitingServerResult = false;
+        let inFlightSinceMs = 0;
+        let streamTimer = null;
         let faceDetector = null;
         let detectorBusy = false;
         let lastPositionHint = 'Position: center your face in the frame';
+        const STREAM_INTERVAL_MS = 70;
+        const IN_FLIGHT_TIMEOUT_MS = 1200;
+        const MAX_BUFFERED_BYTES = 750000;
 
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
@@ -257,6 +264,7 @@
         const faceStatus = document.getElementById('faceStatus');
         const memberName = document.getElementById('memberName');
         const confidenceScore = document.getElementById('confidenceScore');
+        const orbMatches = document.getElementById('orbMatches');
         const decisionText = document.getElementById('decisionText');
         const reasonText = document.getElementById('reasonText');
         const frameCount = document.getElementById('frameCount');
@@ -377,14 +385,20 @@
         function stopCamera() {
             if (stream) stream.getTracks().forEach(track => track.stop());
             if (ws) ws.close();
+            if (streamTimer) {
+                clearTimeout(streamTimer);
+                streamTimer = null;
+            }
             video.srcObject = null;
             isStreaming = false;
+            awaitingServerResult = false;
             startBtn.disabled = false;
             stopBtn.disabled = true;
             statusCard.classList.remove('status-live');
             decisionText.textContent = 'Stopped';
             decisionText.className = 'decision-badge muted';
             confidenceFill.style.width = '0%';
+            orbMatches.textContent = '0 good matches (0%)';
             setQualityComment(actionComment, 'Action: click Start Camera to resume tracking', 'warn');
         }
 
@@ -394,36 +408,71 @@
 
             ws = new WebSocket(wsUrl);
 
-            ws.onopen = () => streamFrames();
+            ws.onopen = () => {
+                awaitingServerResult = false;
+                scheduleNextFrame(0);
+            };
             ws.onmessage = (event) => {
                 try {
+                    awaitingServerResult = false;
                     updateStatus(JSON.parse(event.data));
+                    scheduleNextFrame(0);
                 } catch (err) {
                     decisionText.textContent = 'Response parse failed';
                     decisionText.className = 'deny';
                     reasonText.textContent = err.message;
+                    scheduleNextFrame(STREAM_INTERVAL_MS);
                 }
             };
             ws.onerror = () => {
+                awaitingServerResult = false;
                 decisionText.textContent = 'WebSocket error';
                 decisionText.className = 'deny';
                 reasonText.textContent = 'Connection failed';
             };
+            ws.onclose = () => {
+                awaitingServerResult = false;
+            };
+        }
+
+        function scheduleNextFrame(delayMs = STREAM_INTERVAL_MS) {
+            if (!isStreaming) return;
+            if (streamTimer) clearTimeout(streamTimer);
+            streamTimer = setTimeout(streamFrames, delayMs);
         }
 
         function streamFrames() {
-            if (!isStreaming || !ws || ws.readyState !== WebSocket.OPEN) return;
-
-            if (video.videoWidth === 0 || video.videoHeight === 0) {
-                setTimeout(streamFrames, 100);
+            if (!isStreaming || !ws || ws.readyState !== WebSocket.OPEN) {
+                scheduleNextFrame(STREAM_INTERVAL_MS);
                 return;
             }
 
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
+            if (awaitingServerResult) {
+                const elapsed = Date.now() - inFlightSinceMs;
+                if (elapsed < IN_FLIGHT_TIMEOUT_MS) {
+                    scheduleNextFrame(STREAM_INTERVAL_MS);
+                    return;
+                }
+                awaitingServerResult = false;
+            }
+
+            if (ws.bufferedAmount > MAX_BUFFERED_BYTES) {
+                scheduleNextFrame(STREAM_INTERVAL_MS);
+                return;
+            }
+
+            if (video.videoWidth === 0 || video.videoHeight === 0) {
+                scheduleNextFrame(STREAM_INTERVAL_MS);
+                return;
+            }
+
+            const maxWidth = 480;
+            const scale = Math.min(1, maxWidth / video.videoWidth);
+            canvas.width = Math.round(video.videoWidth * scale);
+            canvas.height = Math.round(video.videoHeight * scale);
             const ctx = canvas.getContext('2d');
             if (!ctx) {
-                setTimeout(streamFrames, 100);
+                scheduleNextFrame(STREAM_INTERVAL_MS);
                 return;
             }
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -460,12 +509,14 @@
                     reader.onload = () => {
                         const base64 = reader.result.split(',')[1];
                         ws.send(base64);
+                        awaitingServerResult = true;
+                        inFlightSinceMs = Date.now();
                     };
                     reader.readAsDataURL(blob);
                 }
-            }, 'image/jpeg', 0.8);
+            }, 'image/jpeg', 0.65);
 
-            setTimeout(streamFrames, 100);
+            scheduleNextFrame(STREAM_INTERVAL_MS);
         }
 
         function updateStatus(data) {
@@ -485,6 +536,7 @@
                 memberName.textContent = 'Waiting...';
                 confidenceScore.textContent = '0%';
                 confidenceFill.style.width = '0%';
+                orbMatches.textContent = '0 good matches (0%)';
                 setQualityComment(actionComment, 'Action: face camera directly and hold for 1-2 seconds', 'warn');
                 return;
             }
@@ -493,6 +545,9 @@
             memberName.textContent = data.name || 'No Match';
             const confidenceValue = data.confidence_pct ?? (typeof data.score === 'number' ? Math.round(data.score * 100) : 0);
             confidenceScore.textContent = `${confidenceValue}%`;
+            const goodMatches = Number.isFinite(data.orb_good_matches) ? data.orb_good_matches : 0;
+            const evidencePct = typeof data.orb_evidence_ratio === 'number' ? Math.round(data.orb_evidence_ratio * 100) : 0;
+            orbMatches.textContent = `${goodMatches} good matches (${evidencePct}%)`;
             confidenceFill.style.width = `${Math.max(0, Math.min(100, confidenceValue))}%`;
             reasonText.textContent = data.reason || '-';
 

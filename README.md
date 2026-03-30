@@ -231,8 +231,18 @@ AUTH_USERS = {
 ### Adjust Face Matching Threshold
 Edit `src/config.py`:
 ```python
-THRESHOLD = 0.62  # Confidence threshold for face match (0-1)
+SIMILARITY_THRESHOLD_HYBRID = 0.72
+MATCH_MARGIN_THRESHOLD = 0.08
+SINGLE_CANDIDATE_EXTRA_THRESHOLD = 0.08
+ORB_GOOD_MATCH_THRESHOLD = 8
+ORB_EVIDENCE_RATIO_THRESHOLD = 0.08
 ```
+
+- `SIMILARITY_THRESHOLD_HYBRID`: minimum score for the default hybrid backend.
+- `MATCH_MARGIN_THRESHOLD`: minimum lead over the next best candidate before a match is trusted.
+- `SINGLE_CANDIDATE_EXTRA_THRESHOLD`: extra strictness when only one approved user exists.
+- `ORB_GOOD_MATCH_THRESHOLD`: minimum ORB local-feature matches required before gate can return ALLOW.
+- `ORB_EVIDENCE_RATIO_THRESHOLD`: minimum normalized ORB evidence ratio required before gate can return ALLOW.
 
 ### Adjust Frame Rate
 Edit `web/gate-live.html`, look for `setInterval(...)`:
@@ -251,6 +261,7 @@ Get-NetTCPConnection -LocalPort 8000 -State Listen | Stop-Process -Force
 - Ensure lighting is good (front-facing, no shadows)
 - Verify member is in **Approved** status (check admin portal)
 - Confidence might be low if angle differs significantly from registration
+- If you changed matching thresholds, re-test with the approved user under the same camera and lighting used at enrollment
 
 **Q: WebSocket connection fails**
 - Ensure gate-live.html is opened after server is running

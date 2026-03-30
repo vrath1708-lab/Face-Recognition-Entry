@@ -122,6 +122,14 @@ def list_approved_embeddings() -> List[Tuple[str, str, str]]:
     return rows
 
 
+def list_approved_members_for_matching() -> List[Tuple[str, str, str, Optional[bytes]]]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT member_id, name, embedding, face_image FROM members WHERE application_status = 'approved'"
+        ).fetchall()
+    return rows
+
+
 def list_approved_face_images() -> List[Tuple[str, str, bytes]]:
     with _connect() as conn:
         rows = conn.execute(

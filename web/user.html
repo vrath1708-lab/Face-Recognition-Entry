@@ -177,8 +177,13 @@
           const data = await res.json();
           if (!res.ok) throw new Error(data.detail || 'Registration failed');
 
-          resultEl.textContent = `Application saved for admin review. Your ID: ${data.application.member_id}. Re-submitting updates the same application.`;
-          resultEl.className = 'good';
+          if (data.already_vip && data.member) {
+            resultEl.textContent = `You are already an approved VIP member (${data.member.member_id}). No new request was created.`;
+            resultEl.className = 'good';
+          } else {
+            resultEl.textContent = `Application saved for admin review. Your ID: ${data.application.member_id}. Re-submitting updates the same application.`;
+            resultEl.className = 'good';
+          }
           capturedBlob = null;
           updateRegisterButtonState();
         } catch (error) {

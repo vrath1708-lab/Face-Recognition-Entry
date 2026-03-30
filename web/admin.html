@@ -217,6 +217,33 @@
         font-weight: 700;
       }
       .hidden { display: none; }
+      .event-card {
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 8px;
+        background: #f8fafc;
+      }
+      .event-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 4px;
+        font-size: 12px;
+        color: #334155;
+      }
+      .event-type {
+        font-weight: 700;
+        color: #0f172a;
+      }
+      .event-meta {
+        font-size: 13px;
+        color: #1e293b;
+      }
+      .event-reason {
+        margin-top: 2px;
+        font-size: 12px;
+        color: #475569;
+      }
       .login-title {
         margin-top: 0;
         text-align: center;
@@ -380,6 +407,74 @@
       function formatDate(value) {
         if (!value) return 'N/A';
         try { return new Date(value).toLocaleString(); } catch { return value; }
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/\"/g, '&quot;')
+          .replace(/'/g, '&#039;');
+      }
+
+      function parseEventLine(line) {
+        const text = String(line || '').trim();
+        const firstSpace = text.indexOf(' ');
+        if (firstSpace <= 0) {
+          return { timestamp: '', payload: null, raw: text };
+        }
+
+        const timestamp = text.slice(0, firstSpace);
+        const jsonPart = text.slice(firstSpace + 1).trim();
+        try {
+          return { timestamp, payload: JSON.parse(jsonPart), raw: text };
+        } catch {
+          return { timestamp, payload: null, raw: text };
+        }
+      }
+
+      function renderEventLine(line) {
+        const parsed = parseEventLine(line);
+        if (!parsed.payload) {
+          return `<div class="event-card"><div class="event-meta">${escapeHtml(parsed.raw)}</div></div>`;
+        }
+
+        const payload = parsed.payload;
+        const eventType = escapeHtml(payload.type || 'EVENT');
+        const ts = escapeHtml(parsed.timestamp ? formatDate(parsed.timestamp) : '');
+        const member = escapeHtml(payload.member_id || '-');
+        const name = escapeHtml(payload.name || '-');
+        const decision = escapeHtml(payload.decision || '-');
+        const score = typeof payload.score === 'number' ? payload.score.toFixed(4) : '-';
+        const orb = Number.isFinite(payload.orb_good_matches) ? payload.orb_good_matches : '-';
+        const orbRatio = typeof payload.orb_evidence_ratio === 'number' ? `${Math.round(payload.orb_evidence_ratio * 100)}%` : '-';
+        const reason = escapeHtml(payload.reason || '-');
+
+        if (payload.type === 'GATE_ATTEMPT') {
+          return `
+            <div class="event-card">
+              <div class="event-head">
+                <span class="event-type">${eventType}</span>
+                <span>${ts}</span>
+              </div>
+              <div class="event-meta">Decision: <strong>${escapeHtml(decision)}</strong> | Member: ${member} (${name})</div>
+              <div class="event-meta">Score: ${score} | ORB Good Matches: ${orb} | ORB Ratio: ${orbRatio}</div>
+              <div class="event-reason">Reason: ${reason}</div>
+            </div>
+          `;
+        }
+
+        return `
+          <div class="event-card">
+            <div class="event-head">
+              <span class="event-type">${eventType}</span>
+              <span>${ts}</span>
+            </div>
+            <div class="event-meta">Member: ${member} (${name})</div>
+            <div class="event-reason">${escapeHtml(JSON.stringify(payload))}</div>
+          </div>
+        `;
       }
 
       async function loadFacePreview(memberId) {
@@ -744,7 +839,11 @@
           }
 
           eventsListEl.className = 'list';
-          eventsListEl.innerHTML = data.events.slice().reverse().map((line) => `<div class="row" style="grid-template-columns:1fr">${line}</div>`).join('');
+          eventsListEl.innerHTML = data.events
+            .slice()
+            .reverse()
+            .map((line) => `<div class="row" style="grid-template-columns:1fr">${renderEventLine(line)}</div>`)
+            .join('');
         } catch (error) {
           eventsListEl.className = 'list bad';
           eventsListEl.textContent = error.message;

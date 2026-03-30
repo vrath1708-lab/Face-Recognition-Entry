@@ -11,7 +11,7 @@ from typing import Dict, Tuple
 
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
@@ -31,19 +31,21 @@ from database import (
     init_db,
     list_applications,
     list_users_for_admin,
-    list_approved_embeddings,
-    list_approved_face_images,
+    list_approved_members_for_matching,
     set_application_status,
     update_member_admin,
 )
 from email_service import send_decision_email
 from face_service import (
     build_embedding_from_frame,
+    build_embedding_from_bgr_image,
     build_lbph_face_from_bgr_image,
     build_lbph_face_from_frame,
+    compute_orb_evidence,
     csv_to_vector,
     find_best_match,
     find_best_match_lbph,
+    passes_orb_evidence,
     vector_to_csv,
 )
 
@@ -54,6 +56,13 @@ CHALLENGE_TTL_SECONDS = 30
 
 TOKENS: Dict[str, Dict[str, object]] = {}
 LIVE_CHALLENGES: Dict[str, Dict[str, object]] = {}
+
+APPROVED_CACHE_TTL_SECONDS = 3
+APPROVED_MATCH_CACHE: Dict[str, object] = {
+    "updated_at": datetime.min,
+    "embeddings": {},
+    "faces": {},
+}
 
 AUTH_USERS = {
     "admin": {"username": "admin", "password": "admin123"},
@@ -79,11 +88,21 @@ def _append_event(payload: dict) -> None:
 
 
 def _bytes_to_bgr(image_bytes: bytes) -> np.ndarray:
-    array = np.frombuffer(image_bytes, dtype=np.uint8)
-    frame = cv2.imdecode(array, cv2.IMREAD_COLOR)
-    if frame is None:
-        raise HTTPException(status_code=400, detail="Invalid image")
-    return frame
+    try:
+        pil_image = Image.open(io.BytesIO(image_bytes))
+        pil_image = ImageOps.exif_transpose(pil_image).convert("RGB")
+        rgb = np.array(pil_image)
+        frame = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        if frame.size == 0:
+            raise ValueError("Empty decoded image")
+        return frame
+    except Exception:
+        # Fallback decoder path for non-standard byte streams.
+        array = np.frombuffer(image_bytes, dtype=np.uint8)
+        frame = cv2.imdecode(array, cv2.IMREAD_COLOR)
+        if frame is None:
+            raise HTTPException(status_code=400, detail="Invalid image")
+        return frame
 
 
 def _create_token(role: str, username: str) -> str:
@@ -147,32 +166,77 @@ def _consume_live_challenge(challenge_id: str, token: str, purpose: str) -> None
 
 
 def _load_approved_embeddings() -> Dict[str, Tuple[str, np.ndarray]]:
-    rows = list_approved_embeddings()
-    return {member_id: (name, csv_to_vector(embedding_csv)) for member_id, name, embedding_csv in rows}
+    _refresh_approved_match_cache()
+    return APPROVED_MATCH_CACHE["embeddings"]  # type: ignore[return-value]
+
+
+def _invalidate_approved_match_cache() -> None:
+    APPROVED_MATCH_CACHE["updated_at"] = datetime.min
+    APPROVED_MATCH_CACHE["embeddings"] = {}
+    APPROVED_MATCH_CACHE["faces"] = {}
+
+
+def _refresh_approved_match_cache(force: bool = False) -> None:
+    now = datetime.utcnow()
+    updated_at = APPROVED_MATCH_CACHE.get("updated_at", datetime.min)
+    if not force and isinstance(updated_at, datetime) and (now - updated_at).total_seconds() < APPROVED_CACHE_TTL_SECONDS:
+        return
+
+    rows = list_approved_members_for_matching()
+    approved_embeddings: Dict[str, Tuple[str, np.ndarray]] = {}
+    approved_faces: Dict[str, Tuple[str, np.ndarray]] = {}
+
+    for member_id, name, embedding_csv, image_bytes in rows:
+        rebuilt_embedding = None
+        rebuilt_face = None
+
+        if image_bytes:
+            try:
+                frame = _bytes_to_bgr(image_bytes)
+                rebuilt_embedding = build_embedding_from_bgr_image(frame)
+                rebuilt_face = build_lbph_face_from_bgr_image(frame)
+            except HTTPException:
+                rebuilt_embedding = None
+                rebuilt_face = None
+
+        if rebuilt_face is not None:
+            approved_faces[member_id] = (name, rebuilt_face)
+
+        if rebuilt_embedding is not None:
+            approved_embeddings[member_id] = (name, rebuilt_embedding)
+            continue
+
+        if embedding_csv:
+            approved_embeddings[member_id] = (name, csv_to_vector(embedding_csv))
+
+    APPROVED_MATCH_CACHE["embeddings"] = approved_embeddings
+    APPROVED_MATCH_CACHE["faces"] = approved_faces
+    APPROVED_MATCH_CACHE["updated_at"] = now
 
 
 def _load_approved_faces_for_lbph() -> Dict[str, Tuple[str, np.ndarray]]:
-    rows = list_approved_face_images()
-    approved_faces: Dict[str, Tuple[str, np.ndarray]] = {}
+    _refresh_approved_match_cache()
+    return APPROVED_MATCH_CACHE["faces"]  # type: ignore[return-value]
 
-    for member_id, name, image_bytes in rows:
-        if not image_bytes:
-            continue
-        try:
-            frame = _bytes_to_bgr(image_bytes)
-        except HTTPException:
-            continue
-        prepared_face = build_lbph_face_from_bgr_image(frame)
-        if prepared_face is None:
-            continue
-        approved_faces[member_id] = (name, prepared_face)
 
-    return approved_faces
+def _validate_gate_face_match(member_id: str | None, probe_face: np.ndarray | None) -> Tuple[bool, int, float]:
+    if not member_id or probe_face is None:
+        return False, 0, 0.0
+
+    approved_faces = _load_approved_faces_for_lbph()
+    matched_face = approved_faces.get(member_id)
+    if matched_face is None:
+        return False, 0, 0.0
+
+    _, reference_face = matched_face
+    good_matches, evidence_ratio = compute_orb_evidence(probe_face, reference_face)
+    return passes_orb_evidence(good_matches, evidence_ratio), good_matches, evidence_ratio
 
 
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
+    _refresh_approved_match_cache(force=True)
 
 
 @app.get("/")
@@ -469,6 +533,8 @@ def admin_update_user(
     if not updated:
         raise HTTPException(status_code=404, detail="User not found")
 
+    _invalidate_approved_match_cache()
+
     _append_event(
         {
             "type": "ADMIN_USER_UPDATED",
@@ -526,6 +592,8 @@ def admin_delete_user(
     if not deleted:
         raise HTTPException(status_code=404, detail="User not found")
 
+    _invalidate_approved_match_cache()
+
     _append_event({"type": "ADMIN_USER_DELETED", "member_id": member_id_clean, "deleted_by": session["username"]})
     return {"ok": True, "member_id": member_id_clean, "message": "User deleted"}
 
@@ -559,6 +627,8 @@ def decide_application(
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Application not found")
+
+    _invalidate_approved_match_cache()
 
     _append_event(
         {
@@ -611,9 +681,9 @@ def events(limit: int = 30, authorization: str | None = Header(default=None, ali
 async def gate_verify(image: UploadFile = File(...), device_id: str = Form(default="gate-camera")) -> dict:
     image_bytes = await image.read()
     frame = _bytes_to_bgr(image_bytes)
+    probe_face = build_lbph_face_from_frame(frame)
 
     if EMBEDDING_BACKEND == "lbph":
-        probe_face = build_lbph_face_from_frame(frame)
         if probe_face is None:
             return {"ok": True, "decision": "DENY", "reason": "face_not_detected", "score": 0.0}
         approved_faces = _load_approved_faces_for_lbph()
@@ -626,8 +696,15 @@ async def gate_verify(image: UploadFile = File(...), device_id: str = Form(defau
         approved_embeddings = _load_approved_embeddings()
         member_id, name, score, match_decision = find_best_match(probe_embedding, approved_embeddings)
 
-    decision = "ALLOW" if match_decision == "ALLOW" and member_id else "DENY"
-    reason = "vip_approved" if decision == "ALLOW" else "not_vip_or_not_matched"
+    orb_verified, orb_good_matches, orb_evidence_ratio = _validate_gate_face_match(member_id, probe_face)
+
+    decision = "ALLOW" if match_decision == "ALLOW" and member_id and orb_verified else "DENY"
+    if decision == "ALLOW":
+        reason = "vip_approved"
+    elif match_decision == "ALLOW" and member_id:
+        reason = "insufficient_face_evidence"
+    else:
+        reason = "not_vip_or_not_matched"
 
     _append_event(
         {
@@ -636,6 +713,8 @@ async def gate_verify(image: UploadFile = File(...), device_id: str = Form(defau
             "member_id": member_id,
             "name": name,
             "score": round(score, 4),
+            "orb_good_matches": orb_good_matches,
+            "orb_evidence_ratio": round(orb_evidence_ratio, 4),
             "decision": decision,
             "reason": reason,
         }
@@ -647,6 +726,8 @@ async def gate_verify(image: UploadFile = File(...), device_id: str = Form(defau
         "member_id": member_id,
         "name": name,
         "score": round(score, 4),
+        "orb_good_matches": orb_good_matches,
+        "orb_evidence_ratio": round(orb_evidence_ratio, 4),
         "reason": reason,
     }
 
@@ -663,14 +744,14 @@ async def websocket_gate_live(websocket: WebSocket):
 
             try:
                 frame_bytes = base64.b64decode(data)
-                image = Image.open(io.BytesIO(frame_bytes))
-                frame = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+                frame = _bytes_to_bgr(frame_bytes)
             except Exception as exc:
                 await websocket.send_json({"ok": False, "face_detected": False, "error": f"Frame decode error: {exc}"})
                 continue
 
+            probe_face = build_lbph_face_from_frame(frame)
+
             if EMBEDDING_BACKEND == "lbph":
-                probe_face = build_lbph_face_from_frame(frame)
                 if probe_face is None:
                     await websocket.send_json({
                         "ok": True,
@@ -696,8 +777,15 @@ async def websocket_gate_live(websocket: WebSocket):
                 approved_embeddings = _load_approved_embeddings()
                 member_id, name, score, match_decision = find_best_match(probe_embedding, approved_embeddings)
 
-            decision = "ALLOW" if match_decision == "ALLOW" and member_id else "DENY"
-            reason = "vip_approved" if decision == "ALLOW" else "not_vip_or_not_matched"
+            orb_verified, orb_good_matches, orb_evidence_ratio = _validate_gate_face_match(member_id, probe_face)
+
+            decision = "ALLOW" if match_decision == "ALLOW" and member_id and orb_verified else "DENY"
+            if decision == "ALLOW":
+                reason = "vip_approved"
+            elif match_decision == "ALLOW" and member_id:
+                reason = "insufficient_face_evidence"
+            else:
+                reason = "not_vip_or_not_matched"
             confidence_pct = int(min(100, max(0, score * 100)))
 
             await websocket.send_json(
@@ -707,6 +795,8 @@ async def websocket_gate_live(websocket: WebSocket):
                     "matched_member_id": member_id,
                     "name": name,
                     "score": round(score, 4),
+                    "orb_good_matches": orb_good_matches,
+                    "orb_evidence_ratio": round(orb_evidence_ratio, 4),
                     "confidence_pct": confidence_pct,
                     "decision": decision,
                     "reason": reason,

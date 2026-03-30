@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "VIP Gate Verify",
+    "slug": "vip-gate-verify",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "android": {
+      "permissions": [
+        "CAMERA"
+      ],
+      "package": "com.airport.vipgateverify"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.airport.vipgateverify",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Camera is used for live gate VIP verification."
+      }
+    }
+  }
+}
